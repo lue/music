@@ -56,7 +56,7 @@ void compute_LLA_density( const grid_hierarchy& u, grid_hierarchy& fnew, unsigne
 						D[0][2] = D[2][0] = (ACC(ix-1,iy,iz-1)-ACC(ix-1,iy,iz+1)-ACC(ix+1,iy,iz-1)+ACC(ix+1,iy,iz+1))*h2_4;
 						D[1][2] = D[2][1] = (ACC(ix,iy-1,iz-1)-ACC(ix,iy-1,iz+1)-ACC(ix,iy+1,iz-1)+ACC(ix,iy+1,iz+1))*h2_4;
 						
-						(*pvar)(ix,iy,iz) = (D[0][0]+D[1][1]+D[2][2] -
+						(*pvar)(ix,iy,iz) = -(D[0][0]+D[1][1]+D[2][2] +
 							( D[0][0]*D[1][1] + D[0][0]*D[2][2] + D[1][1]*D[2][2] +
 							  D[0][1]*D[1][0] + D[0][2]*D[2][0] + D[1][2]*D[2][1] +
 							  D[0][0]*D[0][0] + D[1][1]*D[1][1] + D[2][2]*D[2][2] ));
@@ -80,7 +80,7 @@ void compute_LLA_density( const grid_hierarchy& u, grid_hierarchy& fnew, unsigne
 						D[0][2] = D[2][0] = (ACC(ix-1,iy,iz-1)-ACC(ix-1,iy,iz+1)-ACC(ix+1,iy,iz-1)+ACC(ix+1,iy,iz+1))*h2_4;
 						D[1][2] = D[2][1] = (ACC(ix,iy-1,iz-1)-ACC(ix,iy-1,iz+1)-ACC(ix,iy+1,iz-1)+ACC(ix,iy+1,iz+1))*h2_4;
 						
-						(*pvar)(ix,iy,iz) = (D[0][0]+D[1][1]+D[2][2] -
+						(*pvar)(ix,iy,iz) = -(D[0][0]+D[1][1]+D[2][2] +
 						( D[0][0]*D[1][1] + D[0][0]*D[2][2] + D[1][1]*D[2][2] +
 						 D[0][1]*D[1][0] + D[0][2]*D[2][0] + D[1][2]*D[2][1] +
 						 D[0][0]*D[0][0] + D[1][1]*D[1][1] + D[2][2]*D[2][2] ));
@@ -89,6 +89,7 @@ void compute_LLA_density( const grid_hierarchy& u, grid_hierarchy& fnew, unsigne
 		}
 		else if ( order == 6 )
 		{
+			std::cerr << "BLURB\n";
 			h2_4/=36.;
 			h2/=180.;
 			#pragma omp parallel for 
@@ -116,7 +117,7 @@ void compute_LLA_density( const grid_hierarchy& u, grid_hierarchy& fnew, unsigne
 												+ ACC(ix,iy-1,iz-2)-ACC(ix,iy-1,iz+2)-ACC(ix,iy+1,iz-2)+ACC(ix,iy+1,iz+2))
 											 +1.*(ACC(ix,iy-2,iz-2)-ACC(ix,iy-2,iz+2)-ACC(ix,iy+2,iz-2)+ACC(ix,iy+2,iz+2)))*h2_4;
 						
-						(*pvar)(ix,iy,iz) = (D[0][0]+D[1][1]+D[2][2] +
+						(*pvar)(ix,iy,iz) = -(D[0][0]+D[1][1]+D[2][2] +
 						( D[0][0]*D[1][1] + D[0][0]*D[2][2] + D[1][1]*D[2][2] +
 						 D[0][1]*D[1][0] + D[0][2]*D[2][0] + D[1][2]*D[2][1] +
 						 D[0][0]*D[0][0] + D[1][1]*D[1][1] + D[2][2]*D[2][2] ));
@@ -132,7 +133,7 @@ void compute_LLA_density( const grid_hierarchy& u, grid_hierarchy& fnew, unsigne
 }
 
 
-void compute_Lu_density( const grid_hierarchy& u, grid_hierarchy& fnew )
+void compute_Lu_density( const grid_hierarchy& u, grid_hierarchy& fnew, unsigned order )
 {
 	fnew = u;
 	

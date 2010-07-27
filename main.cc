@@ -461,7 +461,7 @@ int main (int argc, const char * argv[])
 				{
 					u = f;	u.zero();
 					err = the_poisson_solver->solve(f, u);
-					compute_LLA_density( u, f );
+					compute_LLA_density( u, f,grad_order );
 				}
 				
 				// TODO: fix the -1
@@ -575,9 +575,9 @@ int main (int argc, const char * argv[])
 				if( do_baryons )
 				{	
 					if( do_LLA )
-						compute_LLA_density( u1, f );
+						compute_LLA_density( u1, f, grad_order );
 					else
-						compute_Lu_density( u1, f );
+						compute_Lu_density( u1, f, grad_order );
 					
 					// TODO: fix the -1
 					f *= -1.0;
