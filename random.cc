@@ -453,7 +453,7 @@ random_numbers<T>::random_numbers( random_numbers<T>& rc, unsigned cubesize, lon
 					size_t q = ((size_t)i*(size_t)ny+(size_t)j)*(size_t)(nz+2)+(size_t)k;
 					rfine[q] = (*this)(x0[0]+i,x0[1]+j,x0[2]+k);
 				}
-		//this->free_all_mem();	// temporarily free memory, allocate again later
+		this->free_all_mem();	// temporarily free memory, allocate again later
 		
 		
 		
