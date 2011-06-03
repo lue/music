@@ -161,6 +161,7 @@ public:
 		
 		long icube = (ic*ncubes_+jc)*ncubes_+kc;
 		
+		
 		if( rnums_[ icube ] == NULL )
 		{	
 			//... cube has not been precomputed. fill now with random numbers
