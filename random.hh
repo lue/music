@@ -31,6 +31,277 @@
 #include "constraints.hh"
 
 
+class random_number_plugin
+{
+protected:
+	
+	//! reference to the config_file object that holds all configuration options
+	config_file& cf_;
+	const refinement_hierarchy	&refh_;
+	
+	
+public:
+	
+	random_number_plugin( config_file& cf, refinement_hierarchy& refh )
+	: cf_( cf ), refh_(refh)
+	{
+		
+	}
+	
+	virtual ~random_number_plugin()
+	{ }
+	
+	virtual void load( int ilevel, real_t * dataptr ) = 0;
+};
+
+
+class box_rng_plugin : public random_number_plugin
+{
+	using random_number_plugin::cf_;
+	using random_number_plugin::refh_;
+	
+	
+	
+protected:
+	std::vector< real_t* > data_;
+	std::vector<size_t> nx_,ny_,nz_,n_;
+	
+	int								levelmin_, 
+	levelmax_, 
+	levelmin_seed_;
+	std::vector<long>				rngseeds_;
+	std::vector<std::string>		rngfnames_;
+	
+	
+	void allocate()
+	{
+		data_.assign( refh_.levelmax()+1, NULL );
+		nx_.assign( refh_.levelmax()+1, 0 );
+		ny_.assign( refh_.levelmax()+1, 0 );
+		nz_.assign( refh_.levelmax()+1, 0 );
+		n_.assign(  refh_.levelmax()+1, 0 );
+		
+		
+		for( size_t i=refh_.levelmin(); i<=refh_.levelmax(); ++i )
+		{
+			size_t fac = 1;
+			
+			if( i==refh_.levelmin() )
+				fac = 2;
+			
+			nx_[i] = fac * refh_.size(i,0);
+			ny_[i] = fac * refh_.size(i,1);
+			nz_[i] = fac * refh_.size(i,2);
+			n_[i]  = nx_[i] * ny_[i] * nz_[i];
+			
+			data_[i] = new real_t[ n_[i] ];
+		}
+		
+	}
+	
+	void parse_rand_parameters( void )
+	{
+		//... parse random number options
+		for( int i=0; i<=100; ++i )
+		{
+			char seedstr[128];
+			std::string tempstr;
+			sprintf(seedstr,"seed[%d]",i);
+			if( cf_.containsKey( "random", seedstr ) )
+				tempstr = cf_.getValue<std::string>( "random", seedstr );
+			else
+				// "-2" means that no seed entry was found for that level
+				tempstr = std::string("-2");
+			
+			if( is_number( tempstr ) )
+			{	
+				long ltemp;
+				cf_.convert( tempstr, ltemp );
+				rngfnames_.push_back( "" );
+				if( ltemp < 0 )
+					//... generate some dummy seed which only depends on the level, negative so we know it's not
+					//... an actual seed and thus should not be used as a constraint for coarse levels
+					//rngseeds_.push_back( -abs((unsigned)(ltemp-i)%123+(unsigned)(ltemp+827342523521*i)%123456789) );
+					rngseeds_.push_back( -abs((long)(ltemp-i)%123+(long)(ltemp+7342523521*i)%123456789) );
+				else
+					rngseeds_.push_back( ltemp );
+			}else{
+				rngfnames_.push_back( tempstr );
+				rngseeds_.push_back(-1);
+				std::cout << " - Random numbers for level " << std::setw(3) << i << " will be read from file.\n";
+			}
+			
+		}
+		
+		//.. determine for which levels random seeds/random number files are given
+		levelmin_seed_ = -1;
+		for( unsigned ilevel = 0; ilevel < rngseeds_.size(); ++ilevel )
+		{	
+			if( levelmin_seed_ < 0 && (rngfnames_[ilevel].size() > 0 || rngseeds_[ilevel] > 0) )
+				levelmin_seed_ = ilevel;
+		}
+		
+	}
+	
+	typedef struct bbox{
+		int off[3];
+		int len[3];
+	};
+	
+	
+	void generate_unconstrained( bbox& where, int ilevel, real_t* p )
+	{
+		bbox cube_bbox;
+		size_t cubesize_ = 32;
+		size_t ncubes = std::max( (size_t)((double)(1<<ilevel)/cubesize_), (size_t)1 );
+		size_t ncubes_needed = 1;
+		
+		std::vector<size_t> cube_idx;
+		
+		for( int i=0; i<3; ++i )
+		{
+			cube_bbox.off[i] = (int)floor((double)where.off[i]/(1<<ilevel))*ncubes;
+			int right = (int)floor((double)(where.off[i]+where.len[i])/(1<<ilevel))*ncubes;
+			
+			cube_bbox.len[i] = right-cube_bbox.off[i]+1;	
+			ncubes_needed *= cube_bbox.len[i];
+		}
+		
+		for( int iz = 0; iz<cube_bbox.len[2]; ++iz )
+			for( int iy = 0; iy<cube_bbox.len[1]; ++iy )
+				for( int ix = 0; ix<cube_bbox.len[0]; ++ix )
+				{
+					cube_idx.push_back( cube_bbox.off[0]+ix );
+					cube_idx.push_back( cube_bbox.off[1]+iy );
+					cube_idx.push_back( cube_bbox.off[2]+iz );
+				}
+		
+		#pragma omp parallel for
+		for( size_t icube=0; icube<ncubes_needed; ++icube )
+		{
+			int ixcube, iycube, izcube;
+			
+			ixcube = cube_idx[3*icube+0];
+			iycube = cube_idx[3*icube+1];
+			izcube = cube_idx[3*icube+2];
+			
+			
+			real_t *temp = new real_t[ cubesize_*cubesize_*cubesize_ ];
+			
+			gsl_rng	*RNG = gsl_rng_alloc( gsl_rng_mt19937 );
+			long seed = (ixcube*ncubes+iycube)*ncubes+izcube;
+			gsl_rng_set( RNG, seed );
+			
+			for( size_t ii=0; ii<cubesize_; ++ii )
+				for( size_t jj=0; jj<cubesize_; ++jj )
+					for( size_t kk=0; kk<cubesize_; ++kk )
+						temp[(ii*cubesize_+jj)*cubesize_+kk] = gsl_ran_ugaussian_ratio_method( RNG );
+			
+			
+			
+			gsl_rng_free( RNG );
+						
+						
+			int x0[3], x1[3];
+			
+			for( int i=0; i<3; ++i )
+			{
+				x0[i] = std::max( (size_t)where.off[i], cube_idx[3*icube+i]*cubesize_ ) - where.off[i];
+				x1[i] = std::min( (size_t)(where.off[i]+where.len[i]), (cube_idx[3*icube+i]+1)*cubesize_ ) - where.off[i];
+			}
+			
+			
+						
+						
+						
+			delete[] temp;
+			
+		}
+		
+		
+	}
+	
+	void compute_random_numbers( void )
+	{
+		//... seeds are given for a level coarser than levelmin
+		if( levelmin_seed_ < levelmin_ )
+		{
+			// need to generate constrained sets up to levelmin
+		}
+		
+		//... seeds are given for a level finer than levelmin, obtain by averaging
+		if( levelmin_seed_ > levelmin_ )
+		{
+			
+			// need to generate coarser level first
+		}
+	}
+	
+	
+public:
+	
+	box_rng_plugin( config_file& cf, refinement_hierarchy& refh )
+	: random_number_plugin( cf, refh )
+	{
+		allocate();
+	}
+	
+	~box_rng_plugin()
+	{}
+	
+	
+	void load( int ilevel, real_t * dataptr )
+	{
+		dataptr = data_[ilevel];
+	}
+	
+};
+
+
+
+/*!
+ * @brief implements abstract factory design pattern for RNG plug-ins
+ */
+struct random_number_plugin_creator
+{
+	//! create an instance of a plug-in
+	virtual random_number_plugin * create( config_file& cf ) const = 0;
+	
+	//! destroy an instance of a plug-in
+	virtual ~random_number_plugin_creator() { }
+};
+
+//! maps the name of a plug-in to a pointer of the factory pattern 
+std::map< std::string, random_number_plugin_creator *>& get_random_number_plugin_map();
+
+//! print a list of all registered output plug-ins
+void print_random_number_plugins();
+
+/*!
+ * @brief concrete factory pattern for RNG plug-ins
+ */
+template< class Derived >
+struct random_number_plugin_creator_concrete : public random_number_plugin_creator
+{
+	//! register the plug-in by its name
+	random_number_plugin_creator_concrete( const std::string& plugin_name )
+	{
+		get_random_number_plugin_map()[ plugin_name ] = this;
+	}
+	
+	//! create an instance of the plug-in
+	random_number_plugin * create( config_file& cf ) const
+	{
+		return new Derived( cf );
+	}
+};
+
+
+/**********************************************************************************************/
+/**********************************************************************************************/
+/**********************************************************************************************/
+
+
 /*!
  * @brief encapsulates all things random number generator related
  */
@@ -160,7 +431,6 @@ public:
 		kc = (int)((double)k/cubesize_ + ncubes_) % ncubes_;
 		
 		long icube = (ic*ncubes_+jc)*ncubes_+kc;
-		
 		
 		if( rnums_[ icube ] == NULL )
 		{	
