@@ -33,7 +33,7 @@ protected:
 	}header;
 	
 	bool bhavehydro_;
-	
+        float metal_floor_;
 	
 	void write_file_header( std::ofstream& ofs, unsigned ilevel, const grid_hierarchy& gh )
 	{
@@ -96,8 +96,235 @@ protected:
 			
 		}
 	}
+    
+    size_t restrict_mask( size_t n1, size_t n2, size_t n3, size_t o1, size_t o2, size_t o3,
+                        size_t n1c, size_t n2c, size_t n3c, const float* finemask, float* coarsemask )
+    {
+        //unsigned n1p = n1/2, n2p = n2/2, n3p = n3/2;
+        
+        for( size_t i=0; i<n1c*n2c*n3c; ++i )
+            coarsemask[i] = 0.0f;
+        
+        for( size_t i=0; i<n1; ++i )
+        {
+            size_t ii=i/2+o1;
+            for( size_t j=0; j<n2; ++j )
+            {
+                size_t jj=j/2+o2;
+                for( size_t k=0; k<n3; ++k )
+                {
+                    size_t kk=k/2+o3;
+                    if( finemask[ (i*n2+j)*n3+k ] )
+                        coarsemask[(ii*n2c+jj)*n3c+kk] += 1.0f;
+                }
+            }
+        }
+        
+        size_t count_ref = 0;
+        for( size_t i=0; i<n1c*n2c*n3c; ++i )
+            if( coarsemask[i] > 0.1f )
+            {
+                coarsemask[i] = 1.0f;
+                ++count_ref;
+            }
+        return count_ref;
+        
+        
+    }
+    
+    void write_refinement_mask( const grid_hierarchy& gh )
+    {
+        
+        // generate mask for highest level
+        char ff[256];
+       
+        size_t n1,n2,n3;
+            n1 = gh.get_grid(gh.levelmax())->size(0);
+            n2 = gh.get_grid(gh.levelmax())->size(1);
+            n3 = gh.get_grid(gh.levelmax())->size(2);
+        
+        std::vector<float> data(n1*n2*n3,0.0f);
+        
+        // do finest level
+        {
+            // get mask for levelmax
+            for( size_t i=0; i<n1; ++i )
+                for( size_t j=0; j<n2; ++j )
+                    for( size_t k=0; k<n3; ++k )
+                        if( !gh.is_refined(gh.levelmax(),i,j,k) )
+                            data[(i*n2+j)*n3+k] = 1.0;
+                        else
+                            data[(i*n2+j)*n3+k] = 0.0;
+            
+            // write mask
+            sprintf(ff,"%s/level_%03d/ic_refmap",fname_.c_str(), gh.levelmax() );
+            std::ofstream ofs(ff,std::ios::binary|std::ios::trunc);
+	    write_file_header( ofs, gh.levelmax(), gh );
+
+	    std::ofstream ofs_metals;
+	    
+	    if( metal_floor_ > 0.0f )
+	      {
+		sprintf(ff,"%s/level_%03d/ic_pvar_00001",fname_.c_str(), gh.levelmax() );
+		ofs_metals.open(ff,std::ios::binary|std::ios::trunc);
+		write_file_header( ofs_metals, gh.levelmax(), gh );
+	      }
+
+           
+            
+            std::vector<float> block(n1*n2,0.0f);
+            for( unsigned k=0; k<n3; ++k )
+            {
+                for( unsigned j=0; j<n2; ++j )
+                    for( unsigned i=0; i<n1; ++i )
+                        block[j*n1+i] = data[(i*n2+j)*n3+k];
+                
+                unsigned blksize = n1*n2*sizeof(float);
+                
+                ofs.write( reinterpret_cast<char*> (&blksize), sizeof(unsigned) );
+                ofs.write( reinterpret_cast<char*> (&block[0]), blksize );
+                ofs.write( reinterpret_cast<char*> (&blksize), sizeof(unsigned) );
+
+
+		if( metal_floor_ > 0.0f ){
+
+		  for( unsigned j=0; j<n2; ++j )
+		    for( unsigned i=0; i<n1; ++i )
+		      block[j*n1+i] = data[(i*n2+j)*n3+k] * metal_floor_;
+                
+		  unsigned blksize = n1*n2*sizeof(float);
+                
+		  ofs_metals.write( reinterpret_cast<char*> (&blksize), sizeof(unsigned) );
+		  ofs_metals.write( reinterpret_cast<char*> (&block[0]), blksize );
+		  ofs_metals.write( reinterpret_cast<char*> (&blksize), sizeof(unsigned) );
+		}
+            }
+        }
+        
+        // do all coarser levels
+        for( unsigned ilevel=levelmax_-1; ilevel>=levelmin_; --ilevel )
+        {
+            size_t n1c,n2c,n3c,o1,o2,o3;
+            n1c = gh.get_grid(ilevel)->size(0);
+            n2c = gh.get_grid(ilevel)->size(1);
+            n3c = gh.get_grid(ilevel)->size(2);
+            
+            n1 = gh.get_grid(ilevel+1)->size(0);
+            n2 = gh.get_grid(ilevel+1)->size(1);
+            n3 = gh.get_grid(ilevel+1)->size(2);
+            
+            o1 = gh.get_grid(ilevel+1)->offset(0);
+            o2 = gh.get_grid(ilevel+1)->offset(1);
+            o3 = gh.get_grid(ilevel+1)->offset(2);
+            
+            std::vector<float> data_coarse( n1c*n2c*n3c, 0.0f );
+            
+            /*if( ilevel <= levelmax_-2 )
+            {
+                for( size_t i=0; i<n1*n2*n3; ++i )
+                    data[i] = 0.0;
+                
+                for( unsigned i=2; i<n1-2; ++i )
+                    for( unsigned j=2; j<n2-2; ++j )
+                        for( unsigned k=2; k<n3-2; ++k )
+                            data[(i*n2+j)*n3+k] = 1.0;
+			    }*/
+            
+            size_t nref;
+            nref = restrict_mask( n1, n2, n3, o1, o2, o3, n1c, n2c, n3c, &data[0], &data_coarse[0] );
+            
+            LOGINFO("%f of cells on level %d are refined",(double)nref/(n1c*n2c*n3c),ilevel);
+            
+            sprintf(ff,"%s/level_%03d/ic_refmap",fname_.c_str(), ilevel );
+            std::ofstream ofs(ff,std::ios::binary|std::ios::trunc);
+            write_file_header( ofs, ilevel, gh );
+
+	    std::ofstream ofs_metals;
+	    if( metal_floor_ > 0.0f )
+	      {
+		sprintf(ff,"%s/level_%03d/ic_pvar_00001",fname_.c_str(), ilevel );
+		ofs_metals.open(ff,std::ios::binary|std::ios::trunc);
+		write_file_header( ofs_metals, ilevel, gh );
+	      }
+
+
+            std::vector<float> block(n1c*n2c,0.0f);
+            for( unsigned i=0; i<n3c; ++i )
+            {
+                for( unsigned j=0; j<n2c; ++j )
+                    for( unsigned k=0; k<n1c; ++k )
+                        block[j*n1c+k] = data_coarse[(k*n2c+j)*n3c+i];
+                
+                unsigned blksize = n1c*n2c*sizeof(float);
+                
+                ofs.write( reinterpret_cast<char*> (&blksize), sizeof(unsigned) );
+                ofs.write( reinterpret_cast<char*> (&block[0]), blksize );
+                ofs.write( reinterpret_cast<char*> (&blksize), sizeof(unsigned) );
+
+		if( metal_floor_ > 0.0f ){
+
+		  for( unsigned j=0; j<n2c; ++j )
+                    for( unsigned k=0; k<n1c; ++k )
+                        block[j*n1c+k] = data_coarse[(k*n2c+j)*n3c+i] * metal_floor_;
+                
+		  unsigned blksize = n1c*n2c*sizeof(float);
+                
+		  ofs_metals.write( reinterpret_cast<char*> (&blksize), sizeof(unsigned) );
+		  ofs_metals.write( reinterpret_cast<char*> (&block[0]), blksize );
+		  ofs_metals.write( reinterpret_cast<char*> (&blksize), sizeof(unsigned) );
+		}
+            }
+            
+            data.swap( data_coarse );
+            
+        }
+    }
+    
+    void write_ramses_namelist( const grid_hierarchy& gh )
+	{
+		//... also write the refinement options to a dummy namelist file
+		char ff[256];
+		sprintf(ff,"%s/ramses.nml",fname_.c_str() );
+		
+		std::ofstream ofst(ff,std::ios::trunc);
+		
+		ofst
+            << "&INIT_PARAMS\n"
+            << "filetype=\'grafic\'\n";
+		for( unsigned i=gh.levelmin();i<=gh.levelmax(); ++i)
+		{
+			sprintf(ff,"initfile(%d)=\'%s/level_%03d\'\n",i-gh.levelmin()+1,fname_.c_str(), i );
+			ofst << std::string(ff);
+		}
+		ofst << "/\n\n";
+		
+		
+        unsigned naddref = 8; // initialize with settings for 10 additional levels of refinement
+        unsigned nexp = cf_.getValue<unsigned>("setup","padding");
+        
+        ofst << "&AMR_PARAMS\n"
+            << "levelmin=" << gh.levelmin() << "\n"
+            << "levelmax=" << gh.levelmax()+naddref << "\n"
+            << "ngridtot=2000000\n"
+            << "nparttot=3000000\n"
+            << "nexpand="<< gh.levelmax()-gh.levelmin()+1+naddref << "*1,\n"
+            << "/\n\n";
+        
+        ofst << "&REFINE_PARAMS\n"
+            << "m_refine=" << gh.levelmax()-gh.levelmin()+1+naddref << "*8.,\n"
+            << "ivar_refine=6\n"
+            << "var_cut_refine=2e-6\n"
+            //<< "mass_cut_refine=1e-9\n"
+            << "interpol_var=1\n"
+            << "interpol_type=0\n"
+            << "/\n\n";
+        
+        
+		LOGINFO("The grafic2 output plug-in wrote the grid data to a partial");
+		LOGINFO("   RAMSES namelist file \'%s\'",fname_.c_str() );
+    }
 	
-	void write_ramses_namelist( const grid_hierarchy& gh )
+	void write_ramses_namelist_old( const grid_hierarchy& gh )
 	{
 		//... also write the refinement options to a dummy namelist file
 		char ff[256];
@@ -193,10 +420,6 @@ public:
 	: output_plugin( cf )
 	{
 		// create directory structure
-		
-		if( !cf.getValueSafe<bool>("setup","force_equal_extent",false) )
-			LOGWARN("Refinement region is not a square box, this may cause problems with RAMSES");
-		
 		remove( fname_.c_str() );
 		mkdir( fname_.c_str(), 0777 );
 		for(unsigned ilevel=levelmin_; ilevel<=levelmax_; ++ilevel )
@@ -208,6 +431,7 @@ public:
 		
 		
 		bhavehydro_ = cf.getValue<bool>("setup","baryons");
+		metal_floor_ = cf.getValueSafe<float>("output","ramses_metal_floor",1e-5);
 	}
 	
 	/*~grafic2_output_plugin()
@@ -292,6 +516,10 @@ public:
 		
 		if( cf_.getValueSafe<bool>("output","ramses_nml",true) )
 			write_ramses_namelist(gh);
+        else if( cf_.getValueSafe<bool>("output","ramses_old_nml",false) )
+			write_ramses_namelist_old(gh);
+        
+        write_refinement_mask( gh );
 		
 	}
 	

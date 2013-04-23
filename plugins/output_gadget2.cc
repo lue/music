@@ -10,22 +10,27 @@
 
 #include <fstream>
 #include "log.hh"
+#include "region_generator.hh"
 #include "output.hh"
 #include "mg_interp.hh"
 #include "mesh.hh"
+
+const int empty_fill_bytes = 60;
 
 template< typename T_store=float >
 class gadget2_output_plugin : public output_plugin
 {
 public:
-    bool do_baryons_;
-	double omegab_;
-	double gamma_;
+  bool do_baryons_;
+  double omegab_;
+  double gamma_;
+  bool shift_halfcell_;
     
 protected:
 	
 	std::ofstream ofs_;
 	bool bmultimass_;
+    bool blongids_;
 	
 	
 	typedef struct io_header
@@ -47,7 +52,7 @@ protected:
 		int flag_metals;                     
 		unsigned int npartTotalHighWord[6];  
 		int  flag_entropy_instead_u;         
-		char fill[60];                       
+		char fill[empty_fill_bytes];                       
 	}header;                       
 	
 	
@@ -71,6 +76,8 @@ protected:
     bool msolunits_;
     unsigned bndparticletype_;
 	double YHe_;
+    
+    refinement_mask refmask;
     
     void distribute_particles( unsigned nfiles, size_t nfine_dm, size_t nfine_gas, size_t ncoarse, 
                               std::vector<unsigned>& nfdm_pf, std::vector<unsigned>& nfgas_pf, std::vector<unsigned>& nc_pf )
@@ -416,11 +423,11 @@ protected:
         size_t curr_block_buf_size = block_buf_size_;
         
         size_t idcount = 0;
-        bool bneed_long_ids = false;
-        if( nptot >= 1ul<<32 )
+        bool bneed_long_ids = blongids_;
+        if( nptot >= 1ul<<32 && !bneed_long_ids )
         {
             bneed_long_ids = true;
-            LOGWARN("Need long particle IDs, make sure to enable in Gadget!");
+            LOGWARN("Need long particle IDs, will write 64bit, make sure to enable in Gadget!");
         }   
 		
 		for( unsigned ifile=0; ifile<nfiles_; ++ifile )
@@ -736,7 +743,7 @@ public:
 	
 	
 	gadget2_output_plugin( config_file& cf )
-	: output_plugin( cf )	
+	: output_plugin( cf )
 	{
 		block_buf_size_ = cf_.getValueSafe<unsigned>("output","gadget_blksize",1048576);
 		
@@ -747,6 +754,10 @@ public:
 		npartmax_ = 1<<30;
 		
 		nfiles_ = cf.getValueSafe<unsigned>("output","gadget_num_files",1);
+      
+        blongids_ = cf.getValueSafe<bool>("output","gadget_longids",false);
+      
+        shift_halfcell_ = cf.getValueSafe<bool>("output","gadget_cell_centered",false);
 
 		//if( nfiles_ < (int)ceil((double)npart/(double)npartmax_) )
 		//	LOGWARN("Should use more files.");
@@ -774,9 +785,7 @@ public:
 			}
 			ofs_.close();
 		}
-		
-		
-		
+        
 		bmorethan2bnd_ = false;
 		if( levelmax_ > levelmin_ +1)
 			bmorethan2bnd_ = true;
@@ -838,16 +847,16 @@ public:
 			header_.BoxSize *= 1000.0;
         
         
+		for( int i=0; i<empty_fill_bytes; ++i )
+		  header_.fill[i] = 0;
 	}
-	
-	
+    
 	void write_dm_mass( const grid_hierarchy& gh )
 	{
 		double rhoc = 27.7519737; // in h^2 1e10 M_sol / Mpc^3
 		
 		if( kpcunits_ )
             rhoc *= 1e-9; // in h^2 1e10 M_sol / kpc^3
-        
         
 		//	rhoc *= 10.0; // in h^2 M_sol / kpc^3
         
@@ -948,7 +957,15 @@ public:
 			shift[1] = -(double)cf_.getValue<int>( "setup", "shift_y" )*h;
 			shift[2] = -(double)cf_.getValue<int>( "setup", "shift_z" )*h;
 		}
-*/		
+*/
+      
+        if( shift_halfcell_ )
+        {
+          double h = 1.0/(1<<(levelmin_+1));
+          shift = new double[3];
+          shift[0] = shift[1] = shift[2] = -h;
+        }
+      
         size_t npart = npfine+npcoarse;
 		size_t nwritten = 0;
 		
@@ -1206,7 +1223,14 @@ public:
 			shift[1] = -(double)cf_.getValue<int>( "setup", "shift_y" )*h;
 			shift[2] = -(double)cf_.getValue<int>( "setup", "shift_z" )*h;
 		}*/
-		
+      
+        if( shift_halfcell_ )
+        {
+          double h = 1.0/(1<<(levelmin_+1));
+          shift = new double[3];
+          shift[0] = shift[1] = shift[2] = -h;
+        }
+          
 		size_t npart = gh.count_leaf_cells(gh.levelmin(), gh.levelmax());;
         size_t nwritten = 0;
 		
